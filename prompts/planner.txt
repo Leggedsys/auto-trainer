@@ -8,6 +8,8 @@ Hard constraints:
   - training.num_envs
   - training.max_iterations
   - training.headless
+- Numeric bounds must be respected exactly:
+{numeric_bounds}
 - Do not propose Python code changes.
 - Do not propose shell script changes.
 - Do not propose environment logic changes.
@@ -35,3 +37,6 @@ Current config:
 
 Previous summary:
 {summary}
+
+Planner feedback:
+{feedback}

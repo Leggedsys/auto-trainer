@@ -173,3 +173,27 @@ scripts/train_go2.sh \
   --max-iterations 50 \
   --headless
 ```
+
+## TODO / Future Work
+
+The current project is intentionally minimal. To become a more complete automatic trainer, the following work is still needed:
+
+- checkpoint management
+  - record checkpoint paths for every run
+  - maintain a best-checkpoint table
+  - support continuing from the best checkpoint instead of always starting a fresh run
+- one-time repository initialization
+  - inspect the target Isaac Lab task once at startup
+  - discover log locations, checkpoint locations, and important config entry points
+- signal selection
+  - define which training outputs matter most for decision making
+  - separate useful long-horizon trends from noisy per-iteration values
+- context compression
+  - summarize past rounds before sending context to the LLM
+  - keep only the most relevant config deltas, best results, and failure reasons
+- recovery and resume
+  - resume from the last complete run after interruption
+  - decide whether to restart from scratch or continue from a stored checkpoint
+- experiment indexing
+  - maintain a compact table linking run -> config -> summary -> planner output -> checkpoint
+  - make it easy to inspect the best run and the latest resumable state

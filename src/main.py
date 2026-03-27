@@ -3,82 +3,56 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import sys
-import threading
-import time
 from pathlib import Path
 from typing import Any
 
 from analyst import build_analysis, save_analysis
 from llm import build_default_llm_client
-from patcher import apply_plan_to_config, save_next_config
+from patcher import apply_plan_to_config, describe_numeric_bounds, save_next_config
 from planner import plan_next_experiment, save_planner_output
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
 from runner import TrainingRunner
 from utils import build_training_config, load_yaml, save_yaml
 
-
-RESET = "\033[0m"
-BOLD = "\033[1m"
-DIM = "\033[2m"
-CYAN = "\033[96m"
-BLUE = "\033[94m"
-GREEN = "\033[92m"
-YELLOW = "\033[93m"
-RED = "\033[91m"
-MAGENTA = "\033[95m"
-
-
-def use_color() -> bool:
-    return sys.stdout.isatty() and os.environ.get("TERM") not in {None, "dumb"}
-
-
-def style(text: str, *codes: str) -> str:
-    if not use_color() or not codes:
-        return text
-    return "".join(codes) + text + RESET
-
-
-class Spinner:
-    def __init__(self, message: str) -> None:
-        self.message = message
-        self._stop = threading.Event()
-        self._thread: threading.Thread | None = None
-        self._frames = [".", "..", "...", "...."]
-
-    def __enter__(self) -> "Spinner":
-        if not sys.stdout.isatty():
-            print(f"{style('>', CYAN, BOLD)} {self.message}")
-            return self
-        self._thread = threading.Thread(target=self._run, daemon=True)
-        self._thread.start()
-        return self
-
-    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
-        del exc_type, exc, tb
-        self._stop.set()
-        if self._thread is not None:
-            self._thread.join()
-        if sys.stdout.isatty():
-            print("\r" + " " * 100 + "\r", end="")
-
-    def _run(self) -> None:
-        index = 0
-        while not self._stop.is_set():
-            frame = self._frames[index % len(self._frames)]
-            print(
-                f"\r{style('>', CYAN, BOLD)} {self.message} {style(frame, CYAN)}",
-                end="",
-                flush=True,
-            )
-            index += 1
-            time.sleep(0.4)
+console = Console()
 
 
 def print_section_title(title: str) -> None:
-    line = style("=" * 60, BLUE)
-    print(line)
-    print(style(title, BOLD, CYAN))
-    print(line)
+    console.print()
+    console.print(Panel(Text(title, style="bold cyan"), border_style="bright_blue"))
+
+
+def print_startup_banner(
+    *, rounds: int, config_path: Path, headless: Any, llm_name: str
+) -> None:
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="bold cyan", justify="right")
+    table.add_column(style="white")
+    table.add_row("Task", "Isaac-Velocity-Flat-Unitree-Go2-v0")
+    table.add_row("Rounds", str(rounds))
+    table.add_row("Config", str(config_path))
+    table.add_row("Headless", str(headless))
+    table.add_row("LLM", llm_name)
+    console.print(Panel(table, title="Go2 Auto Trainer", border_style="bright_blue"))
+
+
+def print_bounds_banner() -> None:
+    bounds = describe_numeric_bounds()
+    table = Table(show_header=True, header_style="bold magenta", box=None)
+    table.add_column("Field", style="cyan")
+    table.add_column("Bounds", style="yellow")
+    for field, (lower, upper) in bounds.items():
+        table.add_row(field, f"[{lower}, {upper}]")
+    console.print(
+        Panel(table, title="Planner Patch Bounds Enabled", border_style="magenta")
+    )
+
+
+def print_stage(message: str) -> None:
+    console.print(f"[bold cyan]>[/bold cyan] {message}")
 
 
 def print_round_report(
@@ -98,14 +72,21 @@ def print_round_report(
     analysis_path: Path,
 ) -> None:
     print_section_title(f"Round {round_index}")
-    print(f"{style('Run ID:', BOLD)}        {run_id}")
-    print(f"{style('Run Dir:', BOLD)}       {run_dir}")
-    print(
-        f"{style('Return Code:', BOLD)}   {style(str(return_code), GREEN if return_code == 0 else RED, BOLD)}"
-    )
-    print()
 
-    print(style("Result", BOLD, MAGENTA))
+    header = Table.grid(padding=(0, 2))
+    header.add_column(style="bold cyan", justify="right")
+    header.add_column(style="white")
+    header.add_row("Run ID", run_id)
+    header.add_row("Run Dir", str(run_dir))
+    header.add_row(
+        "Return Code",
+        f"[bold {'green' if return_code == 0 else 'red'}]{return_code}[/bold {'green' if return_code == 0 else 'red'}]",
+    )
+    console.print(Panel(header, border_style="bright_blue"))
+
+    result_table = Table(show_header=False, box=None, padding=(0, 1))
+    result_table.add_column(style="cyan")
+    result_table.add_column(style="white")
     metric_labels = {
         "mean_reward": "reward",
         "mean_episode_length": "ep_len",
@@ -116,52 +97,62 @@ def print_round_report(
     }
     for key, value in summary.items():
         label = metric_labels.get(key, key)
-        print(f"{style('•', CYAN)} {label:<12} {value}")
-    print()
+        result_table.add_row(label, str(value))
+    console.print(Panel(result_table, title="Result", border_style="green"))
 
-    print(style("Plan", BOLD, MAGENTA))
-    print(f"{style('•', CYAN)} hypothesis     {planner['hypothesis']}")
+    plan_table = Table(show_header=False, box=None, padding=(0, 1))
+    plan_table.add_column(style="cyan")
+    plan_table.add_column(style="white")
+    plan_table.add_row("hypothesis", planner["hypothesis"])
     if planner["changes"]:
         for index, change in enumerate(planner["changes"], start=1):
-            print(
-                f"{style('•', CYAN)} change {index}       {change['field']} {style('->', DIM)} {style(str(change['new_value']), YELLOW, BOLD)}"
+            plan_table.add_row(
+                f"change {index}", f"{change['field']} -> {change['new_value']}"
             )
-            print(f"  {style('reason', DIM)}         {change['reason']}")
+            plan_table.add_row(f"reason {index}", change["reason"])
     else:
-        print(f"{style('•', CYAN)} changes        none")
-    print(f"{style('•', CYAN)} expected       {planner['expected_effect']}")
-    print()
+        plan_table.add_row("changes", "none")
+    plan_table.add_row("expected", planner["expected_effect"])
+    console.print(Panel(plan_table, title="Plan", border_style="magenta"))
 
-    print(style("Artifacts", BOLD, MAGENTA))
-    print(f"{style('•', CYAN)} config_snapshot  {config_snapshot_path}")
-    print(f"{style('•', CYAN)} stdout           {stdout_log_path}")
-    print(f"{style('•', CYAN)} stderr           {stderr_log_path}")
-    print(f"{style('•', CYAN)} summary          {summary_path}")
-    print(f"{style('•', CYAN)} planner_output   {planner_output_path}")
-    print(f"{style('•', CYAN)} next_config      {next_config_path}")
-    print(f"{style('•', CYAN)} analysis         {analysis_path}")
-    print()
+    artifact_table = Table(show_header=False, box=None, padding=(0, 1))
+    artifact_table.add_column(style="cyan")
+    artifact_table.add_column(style="white")
+    artifact_table.add_row("config_snapshot", str(config_snapshot_path))
+    artifact_table.add_row("stdout", str(stdout_log_path))
+    artifact_table.add_row("stderr", str(stderr_log_path))
+    artifact_table.add_row("summary", str(summary_path))
+    artifact_table.add_row("planner_output", str(planner_output_path))
+    artifact_table.add_row("next_config", str(next_config_path))
+    artifact_table.add_row("analysis", str(analysis_path))
+    console.print(Panel(artifact_table, title="Artifacts", border_style="yellow"))
 
 
 def print_experiment_overview(round_summaries: list[dict[str, Any]]) -> None:
     print_section_title("Experiment Overview")
     best_round_index: int | None = None
     best_reward: float | None = None
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("Round", style="cyan")
+    table.add_column("Reward", style="white")
+    table.add_column("Status", style="white")
 
     for entry in round_summaries:
         reward = entry["summary"].get("mean_reward")
         status = entry["status"]
-        status_color = (
-            GREEN
+        status_style = (
+            "bold green"
             if status == "improved"
-            else YELLOW
+            else "bold yellow"
             if status == "unchanged"
-            else RED
+            else "bold red"
             if status == "worse"
-            else CYAN
+            else "bold cyan"
         )
-        print(
-            f"{style('•', CYAN)} Round {entry['round']}: reward {style(str(reward), BOLD)} {style('->', DIM)} {style(status, status_color, BOLD)}"
+        table.add_row(
+            str(entry["round"]),
+            str(reward),
+            f"[{status_style}]{status}[/{status_style}]",
         )
         if isinstance(reward, (int, float)) and (
             best_reward is None or reward > best_reward
@@ -169,12 +160,18 @@ def print_experiment_overview(round_summaries: list[dict[str, Any]]) -> None:
             best_reward = float(reward)
             best_round_index = int(entry["round"])
 
+    console.print(table)
+
     if best_round_index is not None:
-        print(
-            f"{style('Best Round:', BOLD)} {style(str(best_round_index), GREEN, BOLD)}"
+        console.print(
+            Panel(
+                f"[bold green]{best_round_index}[/bold green]",
+                title="Best Round",
+                border_style="green",
+            )
         )
     else:
-        print(f"{style('Best Round:', BOLD)} unavailable")
+        console.print(Panel("unavailable", title="Best Round", border_style="red"))
 
 
 def parse_args() -> argparse.Namespace:
@@ -206,6 +203,26 @@ def save_status_file(run_dir: Path, filename: str, payload: dict[str, Any]) -> N
     save_yaml(run_dir / filename, payload)
 
 
+def save_patch_error(
+    run_dir: Path,
+    round_index: int,
+    planner: dict[str, Any],
+    error: str,
+    planner_feedback: str,
+) -> None:
+    save_status_file(
+        run_dir,
+        "patch_error.yaml",
+        {
+            "status": "patch_rejected",
+            "round": round_index,
+            "error": error,
+            "planner_feedback": planner_feedback,
+            "planner": planner,
+        },
+    )
+
+
 def build_interrupt_analysis_prompt(
     round_index: int,
     current_config: dict[str, Any],
@@ -230,11 +247,19 @@ def handle_interrupt(
     previous_summary: dict[str, Any] | None,
     llm_client: Any,
 ) -> None:
-    print()
-    print(style("Interrupted by user. Saving interruption artifacts...", RED, BOLD))
+    console.print()
+    console.print(
+        Panel(
+            "Interrupted by user. Saving interruption artifacts...",
+            title="Interrupted",
+            border_style="red",
+        )
+    )
 
     if run_dir is None:
-        print(style("No active run directory yet; nothing to persist.", YELLOW, BOLD))
+        console.print(
+            "[bold yellow]No active run directory yet; nothing to persist.[/bold yellow]"
+        )
         return
 
     partial_summary_path = run_dir / "summary.json"
@@ -275,17 +300,11 @@ def handle_interrupt(
         json.dump(analysis_payload, file, indent=2)
         file.write("\n")
 
-    print(
-        style(
-            f"Saved interrupt status: {run_dir / 'interrupt_status.yaml'}", YELLOW, BOLD
-        )
+    console.print(
+        f"[bold yellow]Saved interrupt status:[/bold yellow] {run_dir / 'interrupt_status.yaml'}"
     )
-    print(
-        style(
-            f"Saved interrupt analysis: {run_dir / 'interrupt_analysis.json'}",
-            YELLOW,
-            BOLD,
-        )
+    console.print(
+        f"[bold yellow]Saved interrupt analysis:[/bold yellow] {run_dir / 'interrupt_analysis.json'}"
     )
 
 
@@ -313,27 +332,28 @@ def main() -> None:
     round_summaries: list[dict[str, Any]] = []
     active_run_dir: Path | None = None
 
-    print_section_title("Go2 Auto Trainer")
-    print(f"{style('Task', BOLD)}        Isaac-Velocity-Flat-Unitree-Go2-v0")
-    print(f"{style('Rounds', BOLD)}      {args.rounds}")
-    print(f"{style('Config', BOLD)}      {config_path}")
-    print(
-        f"{style('Headless', BOLD)}    {current_config.get('training', {}).get('headless')}"
+    print_startup_banner(
+        rounds=args.rounds,
+        config_path=config_path,
+        headless=current_config.get("training", {}).get("headless"),
+        llm_name=llm_client.__class__.__name__,
     )
-    print(f"{style('LLM', BOLD)}         {llm_client.__class__.__name__}")
-    print()
+    print_bounds_banner()
 
     try:
         for round_index in range(args.rounds):
-            print(
-                f"{style('>', CYAN, BOLD)} Preparing round {style(str(round_index), YELLOW, BOLD)}"
-            )
+            print_stage(f"Preparing round {round_index}")
             config = build_training_config(current_config)
-            with Spinner(f"Running training for round {round_index}"):
+            with console.status(
+                f"[bold cyan]Running training for round {round_index}[/bold cyan]",
+                spinner="dots",
+            ):
                 result = runner.run(config)
 
             active_run_dir = result.run_dir
-            print(style(f"✓ Training finished for round {round_index}", GREEN, BOLD))
+            console.print(
+                f"[bold green]✓ Training finished for round {round_index}[/bold green]"
+            )
             analysis = build_analysis(result.summary, previous_summary)
             analysis_path = result.run_dir / "analysis.md"
             save_analysis(analysis_path, analysis)
@@ -342,20 +362,62 @@ def main() -> None:
                 "goal",
                 "Improve training quality using only allowed training configuration changes.",
             )
-            with Spinner(f"Generating planner suggestion for round {round_index}"):
-                planner = plan_next_experiment(
-                    goal=planner_goal,
-                    current_config=current_config,
-                    summary=result.summary,
-                    llm_client=llm_client,
-                    prompt_path=planner_prompt_path,
-                )
+            planner_feedback = "None"
+            planner = None
+            for attempt in range(3):
+                with console.status(
+                    f"[bold cyan]Generating planner suggestion for round {round_index}[/bold cyan]",
+                    spinner="aesthetic",
+                ):
+                    planner = plan_next_experiment(
+                        goal=planner_goal,
+                        current_config=current_config,
+                        summary=result.summary,
+                        llm_client=llm_client,
+                        prompt_path=planner_prompt_path,
+                        feedback=planner_feedback,
+                    )
+
+                try:
+                    with console.status(
+                        f"[bold cyan]Applying safe patch for round {round_index}[/bold cyan]",
+                        spinner="line",
+                    ):
+                        next_config = apply_plan_to_config(current_config, planner)
+                    break
+                except ValueError as exc:
+                    planner_feedback = (
+                        "Your previous proposal was rejected. "
+                        f"Reason: {exc}. Return a corrected JSON plan that respects all bounds."
+                    )
+                    console.print(
+                        Panel(
+                            f"{exc}\nRetrying planner with bound feedback (attempt {min(attempt + 2, 3)}/3).",
+                            title="Patch Rejected",
+                            border_style="red",
+                        )
+                    )
+                    if attempt == 2:
+                        save_patch_error(
+                            result.run_dir,
+                            round_index,
+                            planner,
+                            str(exc),
+                            planner_feedback,
+                        )
+                        console.print(
+                            Panel(
+                                "Round stopped safely. Current run artifacts were preserved.",
+                                title="Planner Failed After Retries",
+                                border_style="red",
+                            )
+                        )
+                        return
+
+            assert planner is not None
 
             planner_output_path = result.run_dir / "planner_output.json"
             save_planner_output(planner_output_path, planner)
-
-            with Spinner(f"Applying safe patch for round {round_index}"):
-                next_config = apply_plan_to_config(current_config, planner)
             next_config_path = result.run_dir / "next_config.yaml"
             save_next_config(next_config, next_config_path)
 

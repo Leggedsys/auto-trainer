@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from llm import LLMClient
+from patcher import describe_numeric_bounds
 
 
 ALLOWED_FIELDS = {
@@ -24,11 +25,17 @@ def build_planner_prompt(
     goal: str,
     current_config: dict[str, Any],
     summary: dict[str, Any],
+    feedback: str,
 ) -> str:
+    bounds_lines = []
+    for field, (lower, upper) in describe_numeric_bounds().items():
+        bounds_lines.append(f"- {field}: [{lower}, {upper}]")
     return template.format(
         goal=goal,
         current_config=json.dumps(current_config, indent=2, sort_keys=True),
         summary=json.dumps(summary, indent=2, sort_keys=True),
+        numeric_bounds="\n".join(bounds_lines),
+        feedback=feedback,
     )
 
 
@@ -82,6 +89,7 @@ def plan_next_experiment(
     summary: dict[str, Any],
     llm_client: LLMClient,
     prompt_path: Path,
+    feedback: str = "None",
 ) -> dict[str, Any]:
     template = load_planner_prompt(prompt_path)
     prompt = build_planner_prompt(
@@ -89,6 +97,7 @@ def plan_next_experiment(
         goal=goal,
         current_config=current_config,
         summary=summary,
+        feedback=feedback,
     )
     response_text = llm_client.generate(prompt)
     try:

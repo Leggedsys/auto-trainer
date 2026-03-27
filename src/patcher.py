@@ -36,6 +36,10 @@ NUMERIC_BOUNDS = {
 }
 
 
+def describe_numeric_bounds() -> dict[str, tuple[float, float]]:
+    return NUMERIC_BOUNDS.copy()
+
+
 def _is_allowed_field(field: str) -> bool:
     if any(field.startswith(prefix) for prefix in DENIED_PREFIXES):
         return False
