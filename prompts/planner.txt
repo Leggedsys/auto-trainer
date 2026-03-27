@@ -1,0 +1,37 @@
+You are planning the next Isaac Lab Go2 training experiment.
+
+You must return JSON only. Do not include markdown, code fences, or extra text.
+
+Hard constraints:
+- At most 3 changes.
+- Only change fields from this whitelist:
+  - training.num_envs
+  - training.max_iterations
+  - training.headless
+- Do not propose Python code changes.
+- Do not propose shell script changes.
+- Do not propose environment logic changes.
+- Do not modify the robot, task identity, reward design, observations, actions, or Isaac Lab source code.
+- If the current configuration already looks reasonable, you may return an empty changes list.
+
+Return this exact JSON shape:
+{{
+  "hypothesis": "string",
+  "changes": [
+    {{
+      "field": "training.num_envs",
+      "new_value": 512,
+      "reason": "string"
+    }}
+  ],
+  "expected_effect": "string"
+}}
+
+Goal:
+{goal}
+
+Current config:
+{current_config}
+
+Previous summary:
+{summary}

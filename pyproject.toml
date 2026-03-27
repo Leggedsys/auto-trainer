@@ -1,0 +1,14 @@
+[project]
+name = "go2-auto-trainer"
+version = "0.1.0"
+description = "Minimal external Isaac Lab Go2 training controller"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "PyYAML>=6.0",
+  "openai>=1.30.0",
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"

@@ -1,0 +1,16 @@
+README.md
+pyproject.toml
+src/analyst.py
+src/llm.py
+src/main.py
+src/models.py
+src/parser.py
+src/patcher.py
+src/planner.py
+src/runner.py
+src/utils.py
+src/go2_auto_trainer.egg-info/PKG-INFO
+src/go2_auto_trainer.egg-info/SOURCES.txt
+src/go2_auto_trainer.egg-info/dependency_links.txt
+src/go2_auto_trainer.egg-info/requires.txt
+src/go2_auto_trainer.egg-info/top_level.txt
