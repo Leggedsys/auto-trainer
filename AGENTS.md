@@ -21,6 +21,12 @@ Primary code paths:
 - `src/planner.py`
 - `prompts/planner.txt`
 
+Target/project attachment paths:
+
+- `configs/base.yaml` under `target.project_root`
+- `configs/base.yaml` under `target.artifact_root`
+- `target_info.yaml` inside the external artifact root
+
 Interface contract:
 
 - input: prompt text
@@ -67,6 +73,17 @@ Its output is constrained in multiple layers:
 5. retry on invalid patch proposal
 
 If the LLM keeps producing invalid values, the run stops safely and writes a patch rejection artifact.
+
+## Initialization Model
+
+The trainer is attached to an external project through init metadata.
+
+The init command records:
+
+- target id
+- external project root
+- external artifact root
+- minimal discovered path checks for launcher and training script
 
 ## Interrupt Analysis
 

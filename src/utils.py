@@ -25,9 +25,13 @@ def save_yaml(path: Path, data: dict[str, Any]) -> None:
 
 
 def build_training_config(raw_config: dict[str, Any]) -> TrainingConfig:
+    target = raw_config["target"]
     isaaclab = raw_config["isaaclab"]
     training = raw_config["training"]
     return TrainingConfig(
+        target_id=target["id"],
+        project_root=Path(target["project_root"]),
+        artifact_root=Path(target["artifact_root"]),
         isaaclab_root_dir=isaaclab["root_dir"],
         isaaclab_launcher=isaaclab["launcher"],
         train_script=isaaclab["train_script"],

@@ -26,7 +26,14 @@ def print_section_title(title: str) -> None:
 
 
 def print_startup_banner(
-    *, rounds: int, config_path: Path, headless: Any, llm_name: str
+    *,
+    rounds: int,
+    config_path: Path,
+    headless: Any,
+    llm_name: str,
+    target_id: str,
+    project_root: Path,
+    artifact_root: Path,
 ) -> None:
     table = Table.grid(padding=(0, 2))
     table.add_column(style="bold cyan", justify="right")
@@ -34,6 +41,9 @@ def print_startup_banner(
     table.add_row("Task", "Isaac-Velocity-Flat-Unitree-Go2-v0")
     table.add_row("Rounds", str(rounds))
     table.add_row("Config", str(config_path))
+    table.add_row("Target", target_id)
+    table.add_row("Project", str(project_root))
+    table.add_row("Artifacts", str(artifact_root))
     table.add_row("Headless", str(headless))
     table.add_row("LLM", llm_name)
     console.print(Panel(table, title="Go2 Auto Trainer", border_style="bright_blue"))
@@ -196,6 +206,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-iterations", type=int, help="Override training.max_iterations"
     )
+    parser.add_argument("--init", action="store_true", help="Initialize target paths")
+    parser.add_argument("--target-id", help="Target identifier for init mode")
+    parser.add_argument("--project-root", help="Target project root for init mode")
+    parser.add_argument(
+        "--artifact-root", help="External artifact root for init mode or override"
+    )
     return parser.parse_args()
 
 
@@ -308,6 +324,67 @@ def handle_interrupt(
     )
 
 
+def run_init_mode(
+    config_path: Path, current_config: dict[str, Any], args: argparse.Namespace
+) -> None:
+    target = current_config.setdefault("target", {})
+    target_id = args.target_id or target.get("id") or "isaaclab_go2"
+    project_root = args.project_root or target.get("project_root")
+    if not project_root:
+        raise ValueError("Init mode requires --project-root or target.project_root")
+    artifact_root = args.artifact_root or target.get(
+        "artifact_root", f"/root/auto-trainer-artifacts/{target_id}"
+    )
+
+    project_root_path = Path(project_root)
+    if not project_root_path.exists():
+        raise ValueError(f"Project root does not exist: {project_root}")
+
+    target["id"] = target_id
+    target["project_root"] = str(project_root_path)
+    target["artifact_root"] = artifact_root
+    save_yaml(config_path, current_config)
+
+    artifact_root_path = Path(artifact_root)
+    artifact_root_path.mkdir(parents=True, exist_ok=True)
+
+    init_info = {
+        "target": {
+            "id": target_id,
+            "project_root": str(project_root_path),
+            "artifact_root": artifact_root,
+        },
+        "isaaclab": current_config.get("isaaclab", {}),
+        "training": {
+            "task": current_config.get("training", {}).get("task"),
+        },
+        "discovered": {
+            "trainer_repo": str(Path(__file__).resolve().parent.parent),
+            "project_root_exists": project_root_path.exists(),
+            "isaaclab_root": current_config.get("isaaclab", {}).get("root_dir"),
+            "launcher": current_config.get("isaaclab", {}).get("launcher"),
+            "train_script": current_config.get("isaaclab", {}).get("train_script"),
+            "launcher_exists": Path(
+                current_config.get("isaaclab", {}).get("launcher", "")
+            ).exists(),
+            "train_script_exists": Path(
+                current_config.get("isaaclab", {}).get("train_script", "")
+            ).exists(),
+        },
+    }
+    save_yaml(artifact_root_path / "target_info.yaml", init_info)
+
+    info_table = Table.grid(padding=(0, 2))
+    info_table.add_column(style="bold cyan", justify="right")
+    info_table.add_column(style="white")
+    info_table.add_row("Config", str(config_path))
+    info_table.add_row("Target", target_id)
+    info_table.add_row("Project", str(project_root_path))
+    info_table.add_row("Artifacts", artifact_root)
+    info_table.add_row("Info File", str(artifact_root_path / "target_info.yaml"))
+    console.print(Panel(info_table, title="Init Complete", border_style="green"))
+
+
 def main() -> None:
     args = parse_args()
     project_root = Path(__file__).resolve().parent.parent
@@ -316,6 +393,10 @@ def main() -> None:
         config_path = project_root / config_path
 
     current_config: dict[str, Any] = load_yaml(config_path)
+    if args.init:
+        run_init_mode(config_path, current_config, args)
+        return
+
     if args.headless:
         current_config.setdefault("training", {})["headless"] = True
     if args.num_envs is not None:
@@ -324,8 +405,16 @@ def main() -> None:
         current_config.setdefault("training", {})["max_iterations"] = (
             args.max_iterations
         )
+    if args.artifact_root is not None:
+        current_config.setdefault("target", {})["artifact_root"] = args.artifact_root
+    if args.project_root is not None:
+        current_config.setdefault("target", {})["project_root"] = args.project_root
 
-    runner = TrainingRunner(project_root=project_root)
+    initial_config = build_training_config(current_config)
+    runner = TrainingRunner(
+        project_root=project_root,
+        artifact_root=initial_config.artifact_root,
+    )
     planner_prompt_path = project_root / "prompts" / "planner.txt"
     llm_client = build_default_llm_client()
     previous_summary: dict[str, Any] | None = None
@@ -335,6 +424,9 @@ def main() -> None:
     print_startup_banner(
         rounds=args.rounds,
         config_path=config_path,
+        target_id=initial_config.target_id,
+        project_root=initial_config.project_root,
+        artifact_root=initial_config.artifact_root,
         headless=current_config.get("training", {}).get("headless"),
         llm_name=llm_client.__class__.__name__,
     )

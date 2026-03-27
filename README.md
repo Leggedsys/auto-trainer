@@ -1,6 +1,6 @@
 # Go2 Auto Trainer
 
-Minimal external controller for running 3 rounds of Isaac Lab Go2 training experiments without modifying the Isaac Lab repository.
+Minimal external controller for running Isaac Lab Go2 training experiments without modifying the Isaac Lab repository.
 
 ## Scope
 
@@ -10,6 +10,7 @@ This project is intentionally narrow.
 - runs outside Isaac Lab
 - calls Isaac Lab only through shell/subprocess
 - runs a 3-round experiment loop
+- writes experiment artifacts outside the trainer repository
 - saves logs, summaries, planner output, and next-round configs
 
 It is not a general platform.
@@ -43,8 +44,9 @@ go2-auto-trainer/
     llm.py
     models.py
     utils.py
-  runs/
 ```
+
+Artifacts are stored outside this repository under the configured target artifact root.
 
 ## Install
 
@@ -64,7 +66,22 @@ The loop is fixed to 3 rounds:
 4. patcher safely applies allowed changes into `next_config.yaml`
 5. next round trains from that generated config
 
+The trainer repository stores code only. Run directories are written to the configured external artifact root for the target.
+
 ## How To Run
+
+Optional first step: initialize the target project path, target id, and external artifact root.
+
+```bash
+python src/main.py --init \
+  --project-root /root/IsaacLab \
+  --target-id isaaclab_go2 \
+  --artifact-root /root/auto-trainer-artifacts/isaaclab_go2
+```
+
+This updates `configs/base.yaml` and writes a small `target_info.yaml` file under the artifact root.
+The project root is selected explicitly so the trainer knows which external project it is attached to.
+The init step also performs a few minimal path checks and records them in `target_info.yaml`.
 
 Preferred: use DeepSeek with an API key:
 
@@ -87,6 +104,7 @@ This will automatically run 3 rounds in sequence.
 Useful CLI options:
 
 ```bash
+python src/main.py --init --project-root /root/IsaacLab --target-id isaaclab_go2 --artifact-root /root/auto-trainer-artifacts/isaaclab_go2
 python src/main.py --config configs/base.yaml --rounds 2
 python src/main.py --rounds 1 --headless
 python src/main.py --rounds 2 --num-envs 512 --max-iterations 100
@@ -94,10 +112,10 @@ python src/main.py --rounds 2 --num-envs 512 --max-iterations 100
 
 ## Output Per Round
 
-Each round creates a new directory under `runs/`:
+Each round creates a new directory under `<artifact_root>/runs/`:
 
 ```text
-runs/<run_id>/
+<artifact_root>/runs/<run_id>/
   config_snapshot.yaml
   stdout.log
   stderr.log
@@ -113,6 +131,23 @@ Important files:
 - `planner_output.json`: planner suggestion in JSON
 - `next_config.yaml`: config used for the next round
 - `analysis.md`: human-readable comparison and notes
+
+## Target Configuration
+
+`configs/base.yaml` now contains a target section:
+
+```yaml
+target:
+  id: isaaclab_go2
+  project_root: /root/IsaacLab
+  artifact_root: /root/auto-trainer-artifacts/isaaclab_go2
+```
+
+- `target.id` identifies the external project/task pairing
+- `target.project_root` identifies the external project location
+- `target.artifact_root` is where runs and other experiment artifacts are written
+
+This follows the same general idea as Isaac Lab external project usage: keep the trainer code separate from the experiment outputs, and attach the trainer to an explicit external project root.
 
 ## Allowed Planner Changes
 

@@ -7,6 +7,9 @@ from typing import Any
 
 @dataclass(slots=True)
 class TrainingConfig:
+    target_id: str
+    project_root: Path
+    artifact_root: Path
     isaaclab_root_dir: str
     isaaclab_launcher: str
     train_script: str
@@ -19,6 +22,7 @@ class TrainingConfig:
 @dataclass(slots=True)
 class RunResult:
     run_id: str
+    target_id: str
     run_dir: Path
     command: list[str]
     return_code: int

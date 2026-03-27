@@ -1,13 +1,16 @@
+target:
+  id: isaaclab_go2
+  project_root: /root/IsaacLab
+  artifact_root: /root/auto-trainer-artifacts/isaaclab_go2
 isaaclab:
   root_dir: /root/IsaacLab
   launcher: /root/IsaacLab/isaaclab.sh
   train_script: /root/IsaacLab/scripts/reinforcement_learning/rsl_rl/train.py
-
 training:
   task: Isaac-Velocity-Flat-Unitree-Go2-v0
   headless: true
   num_envs: 256
   max_iterations: 50
-
 planner:
-  goal: Improve training quality for Isaac-Velocity-Flat-Unitree-Go2-v0 by adjusting only allowed training configuration fields.
+  goal: Improve training quality for Isaac-Velocity-Flat-Unitree-Go2-v0 by adjusting
+    only allowed training configuration fields.

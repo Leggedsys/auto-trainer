@@ -10,11 +10,13 @@ from utils import generate_run_id, save_yaml
 
 
 class TrainingRunner:
-    def __init__(self, project_root: Path) -> None:
+    def __init__(self, project_root: Path, artifact_root: Path) -> None:
         self.project_root = project_root
-        self.runs_dir = project_root / "runs"
+        self.artifact_root = artifact_root
+        self.runs_dir = artifact_root / "runs"
 
     def run(self, config: TrainingConfig) -> RunResult:
+        self.runs_dir.mkdir(parents=True, exist_ok=True)
         run_id = generate_run_id()
         run_dir = self.runs_dir / run_id
         run_dir.mkdir(parents=True, exist_ok=False)
@@ -27,6 +29,10 @@ class TrainingRunner:
         save_yaml(
             config_snapshot_path,
             {
+                "target": {
+                    "id": config.target_id,
+                    "artifact_root": str(config.artifact_root),
+                },
                 "isaaclab": {
                     "root_dir": config.isaaclab_root_dir,
                     "launcher": config.isaaclab_launcher,
@@ -82,6 +88,7 @@ class TrainingRunner:
 
         return RunResult(
             run_id=run_id,
+            target_id=config.target_id,
             run_dir=run_dir,
             command=command,
             return_code=completed.returncode,
