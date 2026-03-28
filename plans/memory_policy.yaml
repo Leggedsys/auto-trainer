@@ -1,0 +1,156 @@
+version: 1
+language: zh-CN
+memory_system:
+  scope: auto-trainer project development
+  purpose: >-
+    Store compressed planning and decision state for developing the auto-trainer project itself.
+    This is a project-development memory protocol, not a runtime memory layer for future RL training.
+    Memory is not a log. Keep only high-value, low-regenerability information that changes future decisions.
+  canonical_files:
+    project_memory: plans/PROJECT_MEMORY.md
+    next_actions: plans/NEXT_ACTIONS.md
+  raw_log_files:
+    worklog_inbox: plans/worklog/inbox.md
+  context_views:
+    project_view:
+      purpose: >-
+        Provide high-level stable context before work starts. Use this view for repo-wide
+        planning, architecture, capability boundaries, priority decisions, and stage assessment.
+      sources:
+        - plans/PROJECT_MEMORY.md
+        - plans/NEXT_ACTIONS.md
+      forbidden_sources:
+        - plans/worklog/inbox.md
+    task_view:
+      purpose: >-
+        Provide task-local convergent context during concrete implementation. Use this view for
+        the current coding task, validation state, blockers, and recent task-relevant worklog entries.
+      sources:
+        - plans/NEXT_ACTIONS.md
+        - plans/worklog/inbox.md
+      optional_sources:
+        - plans/PROJECT_MEMORY.md
+      selection_rule: >-
+        Read only the smallest subset needed for the current task. Pull from PROJECT_MEMORY only
+        when the task touches project direction, capability boundaries, or long-term constraints.
+  non_canonical_files: []
+  default_behavior:
+    prefer_overwrite_to_append: true
+    prefer_compression_to_accumulation: true
+    forbid_date_based_memory_sprawl: true
+    forbid_duplicate_views_of_same_facts: true
+    require_memory_read_before_planning: true
+    require_view_selection_before_task: true
+  retention_rules:
+    keep_if:
+      - changes project direction
+      - changes capability boundaries
+      - changes implementation priority
+      - introduces non-obvious irreversible constraint
+      - cannot be cheaply re-derived from current repo state
+    discard_if:
+      - repeats existing memory in different wording
+      - is process narration rather than decision state
+      - can be re-derived from code plus current memory
+      - does not affect near-term or long-term decisions
+      - exists only for completeness or chronology
+  memory_layers:
+    raw_log:
+      file: plans/worklog/inbox.md
+      allowed_content:
+        - exploratory notes
+        - unstable intermediate judgments
+        - candidate decisions
+        - temporary blockers
+        - task-local observations
+      forbidden_content:
+        - pretending to be long-term memory
+        - duplicate restatements of stable memory
+      cleanup_rule: >-
+        After compression, delete process noise and keep only unresolved, still-useful fragments.
+    long_term:
+      file: plans/PROJECT_MEMORY.md
+      allowed_content:
+        - end_state
+        - non_negotiable_constraints
+        - capability_release_route
+        - current_stage_assessment
+        - top_priority
+        - key_decisions
+      forbidden_content:
+        - verbose brainstorm logs
+        - repeated milestone expansions
+        - low-level implementation scratch notes
+    working:
+      file: plans/NEXT_ACTIONS.md
+      allowed_content:
+        - current_goal
+        - top_3_actions
+        - explicit_non_goals
+        - stage_entry_conditions
+      forbidden_content:
+        - stale completed history
+        - long design rationale already captured elsewhere
+  update_protocol:
+    steps:
+      - select memory view: project_view or task_view
+      - read required memory files before planning or implementation
+      - identify whether new information changes decisions
+      - classify as long_term or working memory
+      - place unstable or process-heavy content into raw_log first
+      - compress before writing
+      - overwrite existing sections when possible
+      - delete superseded information immediately
+    questions_before_write:
+      - Is this hard to re-derive later?
+      - Will this change future decisions?
+      - Is this the highest-level stable form of the idea?
+    write_threshold:
+      require_at_least_two_yes: true
+  pruning_protocol:
+    trigger_conditions:
+      - more_than_3_memory_files
+      - same_fact_appears_in_multiple_files
+      - current_actions_contains_expired_items
+      - project_memory_contains_re-derivable_detail
+      - worklog_inbox_exceeds_120_lines
+      - worklog_inbox_contains_merged_or_resolved_threads
+    required_actions:
+      - merge duplicate facts
+      - delete derived documents
+      - rewrite into denser form
+      - keep only canonical files
+      - compress worklog into long_term or working memory when justified
+      - delete stale worklog entries
+  extension_policy:
+    if_new_structure_needed: >-
+      Prefer adding a structured field to this YAML policy before adding another markdown file.
+    preferred_constraints_over_markdown: true
+    note: >-
+      Markdown stores human-readable compressed memory. YAML stores the memory protocol and constraints.
+    portability_note: >-
+      This memory system may later be moved outside the repository. Keep it self-contained,
+      compressed, and oriented around stable development decisions.
+  invocation_protocol:
+    before_each_llm_call:
+      - determine whether the call is project_view or task_view
+      - read memory files required by that view first
+      - summarize only the minimal relevant memory into the prompt context
+      - avoid injecting raw worklog unless the task_view needs unresolved local context
+    project_view_use_cases:
+      - roadmap changes
+      - architecture decisions
+      - capability boundary changes
+      - priority changes
+      - memory compression decisions
+    task_view_use_cases:
+      - concrete implementation
+      - bug fixing
+      - local refactor
+      - validation follow-up
+      - current task convergence
+    anti_bloat_rules:
+      - never inject all memory files by default
+      - never inject full worklog by default
+      - prefer stable memory for global context
+      - prefer local task state for implementation context
