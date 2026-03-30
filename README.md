@@ -83,6 +83,19 @@ This updates `configs/base.yaml` and writes a small `target_info.yaml` file unde
 The project root is selected explicitly so the trainer knows which external project it is attached to.
 The init step also performs a few minimal path checks and records them in `target_info.yaml`.
 
+It should now be treated as the project onboarding step, not just a path initializer. In addition to runtime paths, the project also carries a field registry at `configs/field_registry.yaml` describing the current planner-editable fields, their roles, couplings, bounds, and validation sources.
+
+The init output `target_info.yaml` now also includes a field-registry summary so you can quickly inspect how many fields are planner-enabled, which layers are currently integrated, and which artifacts validate them.
+
+The init step now also creates a first capability package under `<artifact_root>/capability_package/`, including:
+
+- `project_identity.yaml`
+- `capability_status.yaml`
+- `task_policy.yaml`
+- `onboarding_report.yaml`
+
+This is still the first 1B milestone: it summarizes current field wiring status, but it does not yet auto-discover and auto-wire arbitrary new tasks.
+
 Preferred: use DeepSeek with an API key:
 
 ```bash
@@ -151,7 +164,7 @@ This follows the same general idea as Isaac Lab external project usage: keep the
 
 ## Allowed Planner Changes
 
-The patcher only allows these fields:
+The planner and patcher currently allow these fields:
 
 - `training.num_envs`
 - `training.max_iterations`
@@ -159,8 +172,14 @@ The patcher only allows these fields:
 - `training.entropy_coef`
 - `training.clip_param`
 - `training.num_mini_batches`
-- `reward.*`
-- `command.*`
+- `command.lin_vel_x`
+- `command.lin_vel_y`
+- `command.ang_vel_z`
+- `command.heading`
+- `reward.track_lin_vel_xy_exp.weight`
+- `reward.track_ang_vel_z_exp.weight`
+- `reward.feet_air_time.weight`
+- `reward.flat_orientation_l2.weight`
 
 It rejects changes to task identity, robot settings, observation settings, physics settings, code paths, and Isaac Lab paths.
 
@@ -172,8 +191,51 @@ Training parameter safety bounds are also enforced for planner-generated patches
 - `training.entropy_coef`: 0.0 to 0.1
 - `training.clip_param`: 0.05 to 0.4
 - `training.num_mini_batches`: 1 to 64
+- `command.lin_vel_x`: [-1.5, 1.5]
+- `command.lin_vel_y`: [-1.5, 1.5]
+- `command.ang_vel_z`: [-2.0, 2.0]
+- `command.heading`: [-pi, pi]
+- `reward.track_lin_vel_xy_exp.weight`: 0.0 to 5.0
+- `reward.track_ang_vel_z_exp.weight`: 0.0 to 5.0
+- `reward.feet_air_time.weight`: 0.0 to 2.0
+- `reward.flat_orientation_l2.weight`: -10.0 to 0.0
 
 Manual CLI overrides such as `--num-envs` and `--max-iterations` are still allowed.
+
+## Trainer Override Scaffold
+
+The repository now includes `trainer_override_mode` and `trainer_overrides` in `configs/base.yaml` and in the runtime `TrainingConfig` model.
+
+Current modes:
+
+- `none`: record requested overrides only; do not inject them
+- `hydra`: translate supported keys into Hydra agent overrides for the Isaac Lab RSL-RL script
+
+Current supported trainer override fields:
+
+- `learning_rate`: `1e-6` to `1e-2`
+- `entropy_coef`: `0.0` to `0.1`
+- `clip_param`: `0.05` to `0.4`
+- `num_mini_batches`: `1` to `64`
+
+Today this is still a controlled scaffold:
+
+- it is recorded into `effective_input.yaml`
+- a separate `trainer_override_resolution.yaml` records whether the chosen mode produced effective CLI overrides
+- a separate `trainer_override_verification.yaml` checks whether the dumped Isaac Lab `agent.yaml` actually contains the requested override values
+- it is not planner-editable
+
+Based on the checked Isaac Lab training entrypoint, Hydra-based agent overrides are feasible because the script preserves unknown CLI args for Hydra and applies them to `agent.*` config keys before training.
+
+At the repository wrapper layer, `scripts/train_go2.sh` now preserves unknown extra arguments and forwards them to the Isaac Lab training script, which enables Hydra override passthrough without modifying Isaac Lab source code.
+
+When Isaac Lab writes `params/agent.yaml` for a run, this repository now verifies the requested trainer overrides against that dumped agent config and records the result as `trainer_override_verification.yaml`.
+
+This keeps future trainer override work explicit without pretending unsupported values already affect training.
+
+The first trainer-parameter field family is now also reopened to the planner at the `training.*` layer, because these fields have a closed loop across planner validation, patch validation, Hydra mapping, passthrough, and `agent.yaml` verification.
+
+The first command and reward field families are now also reopened to the planner because they now have the same closed loop across planner validation, patch validation, Hydra env overrides, passthrough, and final `env.yaml` verification.
 
 ## Interrupt Behavior
 
@@ -218,8 +280,9 @@ The current project is intentionally minimal. To become a more complete automati
   - maintain a best-checkpoint table
   - support continuing from the best checkpoint instead of always starting a fresh run
 - one-time repository initialization
+  - extend onboarding from summary-only checks to capability wiring checks
   - inspect the target Isaac Lab task once at startup
-  - discover log locations, checkpoint locations, and important config entry points
+  - discover log locations, checkpoint locations, important config entry points, and field wiring status
 - signal selection
   - define which training outputs matter most for decision making
   - separate useful long-horizon trends from noisy per-iteration values

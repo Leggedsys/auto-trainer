@@ -9,6 +9,7 @@ TASK="${TASK:-Isaac-Velocity-Flat-Unitree-Go2-v0}"
 NUM_ENVS="${NUM_ENVS:-256}"
 MAX_ITERATIONS="${MAX_ITERATIONS:-50}"
 HEADLESS="${HEADLESS:-0}"
+EXTRA_ARGS=()
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -41,8 +42,8 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     *)
-      printf 'Unknown argument: %s\n' "$1" >&2
-      exit 1
+      EXTRA_ARGS+=("$1")
+      shift
       ;;
   esac
 done
@@ -71,6 +72,10 @@ CMD=(
 
 if [[ "$HEADLESS" == "1" ]]; then
   CMD+=(--headless)
+fi
+
+if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
+  CMD+=("${EXTRA_ARGS[@]}")
 fi
 
 exec "${CMD[@]}"

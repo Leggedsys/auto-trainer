@@ -8,6 +8,14 @@ from typing import Any
 
 from analyst import build_analysis, save_analysis
 from llm import build_default_llm_client
+from onboarding import (
+    build_generated_field_registry,
+    build_legged_locomotion_source_snippets,
+    is_legged_locomotion_task,
+    run_field_discovery_and_normalization,
+    save_generated_field_registry,
+    update_capability_package_with_normalized_fields,
+)
 from patcher import apply_plan_to_config, describe_numeric_bounds, save_next_config
 from planner import plan_next_experiment, save_planner_output
 from rich.console import Console
@@ -18,6 +26,190 @@ from runner import TrainingRunner
 from utils import build_training_config, load_yaml, save_yaml
 
 console = Console()
+
+
+def summarize_field_registry(field_registry: dict[str, Any]) -> dict[str, Any]:
+    fields = field_registry.get("fields", [])
+    if not isinstance(fields, list):
+        raise ValueError("field_registry.yaml must contain a list field 'fields'")
+
+    enabled_fields = []
+    layers: dict[str, int] = {}
+    validation_sources: dict[str, int] = {}
+    for entry in fields:
+        if not isinstance(entry, dict):
+            raise ValueError("Each field registry entry must be an object")
+        field = entry.get("field")
+        layer = entry.get("layer")
+        validation_source = entry.get("validation_source")
+        enabled_for_planner = bool(entry.get("enabled_for_planner", False))
+        if not isinstance(field, str) or not isinstance(layer, str):
+            raise ValueError(
+                "Each field registry entry must define string field and layer"
+            )
+        layers[layer] = layers.get(layer, 0) + 1
+        if isinstance(validation_source, str):
+            validation_sources[validation_source] = (
+                validation_sources.get(validation_source, 0) + 1
+            )
+        if enabled_for_planner:
+            enabled_fields.append(field)
+
+    return {
+        "field_count": len(fields),
+        "planner_enabled_count": len(enabled_fields),
+        "planner_enabled_fields": enabled_fields,
+        "layers": layers,
+        "validation_sources": validation_sources,
+    }
+
+
+def build_capability_status(
+    field_registry: dict[str, Any],
+    normalized_candidates: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    fields = field_registry.get("fields", [])
+    field_status = []
+    layer_status: dict[str, dict[str, Any]] = {}
+    normalized_lookup = {}
+    not_applicable_families = set()
+    if normalized_candidates is not None:
+        normalized_lookup = {
+            entry["normalized_field"]: entry
+            for entry in normalized_candidates.get("normalized_fields", [])
+        }
+        not_applicable_families = set(
+            normalized_candidates.get("not_applicable_families", [])
+        )
+
+    for entry in fields:
+        field = entry["field"]
+        layer = entry["layer"]
+        hydra_path = entry.get("hydra_path")
+        validation_source = entry.get("validation_source")
+        planner_enabled = bool(entry.get("enabled_for_planner", False))
+        normalized_entry = normalized_lookup.get(field)
+        family_not_applicable = layer in not_applicable_families
+
+        status = {
+            "field": field,
+            "layer": layer,
+            "known": True,
+            "mapped": (hydra_path is not None)
+            and (normalized_entry is not None or normalized_candidates is None),
+            "resolvable": (hydra_path is not None)
+            and (normalized_entry is not None or normalized_candidates is None),
+            "verifiable": isinstance(validation_source, str)
+            and (normalized_entry is not None or normalized_candidates is None),
+            "planner_enabled": planner_enabled and normalized_entry is not None,
+            "family_status": "not_applicable"
+            if family_not_applicable
+            else "applicable",
+            "evidence": {
+                "hydra_path": hydra_path,
+                "validation_source": validation_source,
+                "normalized": normalized_entry is not None,
+            },
+        }
+        field_status.append(status)
+
+        layer_entry = layer_status.setdefault(
+            layer,
+            {
+                "field_count": 0,
+                "planner_enabled_count": 0,
+                "fully_wired_count": 0,
+            },
+        )
+        layer_entry["field_count"] += 1
+        if status["planner_enabled"]:
+            layer_entry["planner_enabled_count"] += 1
+        if status["mapped"] and status["resolvable"] and status["verifiable"]:
+            layer_entry["fully_wired_count"] += 1
+
+    return {
+        "fields": field_status,
+        "layers": layer_status,
+    }
+
+
+def build_task_policy(current_config: dict[str, Any]) -> dict[str, Any]:
+    task = current_config.get("training", {}).get("task")
+    return {
+        "task_id": task,
+        "primary_metric": "mean_reward",
+        "secondary_metrics": [
+            "mean_episode_length",
+            "policy_loss",
+            "value_loss",
+            "entropy",
+        ],
+        "plateau_policy": {
+            "type": "manual_review_required",
+            "note": "Plateau criteria are not yet automatically inferred for new tasks.",
+        },
+        "stop_conditions": {
+            "reward_target": None,
+            "manual_stop": True,
+            "budget_exhaustion": True,
+        },
+        "unacceptable_behaviors": [
+            "illegal field access",
+            "changes without verification path",
+            "changes that require Isaac Lab source edits",
+        ],
+    }
+
+
+def build_onboarding_report(
+    *,
+    project_identity: dict[str, Any],
+    field_registry_summary: dict[str, Any] | None,
+    capability_status: dict[str, Any] | None,
+    normalized_candidates: dict[str, Any] | None,
+    discovery_error: dict[str, Any] | None,
+) -> dict[str, Any]:
+    layer_summary = capability_status["layers"] if capability_status is not None else {}
+    fully_wired_layers = []
+    partial_layers = []
+    for layer, stats in layer_summary.items():
+        if stats["field_count"] == stats["fully_wired_count"]:
+            fully_wired_layers.append(layer)
+        else:
+            partial_layers.append(layer)
+
+    planner_enabled_fields = (
+        field_registry_summary["planner_enabled_fields"]
+        if field_registry_summary is not None
+        else []
+    )
+    normalized_count = (
+        len(normalized_candidates.get("normalized_fields", []))
+        if normalized_candidates is not None
+        else 0
+    )
+    return {
+        "project": project_identity,
+        "summary": {
+            "planner_enabled_field_count": len(planner_enabled_fields),
+            "normalized_candidate_count": normalized_count,
+            "fully_wired_layers": fully_wired_layers,
+            "partially_wired_layers": partial_layers,
+        },
+        "gaps": {
+            "automatic_discovery": "failed"
+            if discovery_error is not None
+            else "implemented_in_restricted_mode",
+            "automatic_resolver_generation": "not_implemented",
+            "two_round_acceptance": "not_run_in_init",
+        },
+        "discovery_error": discovery_error,
+        "next_actions": [
+            "review capability_status.yaml for field-level wiring status",
+            "review field_registry.yaml for semantic coverage",
+            "run at least two validation rounds before declaring onboarding complete",
+        ],
+    }
 
 
 def print_section_title(title: str) -> None:
@@ -74,6 +266,13 @@ def print_round_report(
     summary: dict[str, Any],
     planner: dict[str, Any],
     config_snapshot_path: Path,
+    effective_input_path: Path,
+    trainer_override_resolution_path: Path,
+    trainer_override_verification_path: Path,
+    command_override_resolution_path: Path,
+    command_override_verification_path: Path,
+    reward_override_resolution_path: Path,
+    reward_override_verification_path: Path,
     stdout_log_path: Path,
     stderr_log_path: Path,
     summary_path: Path,
@@ -129,6 +328,25 @@ def print_round_report(
     artifact_table.add_column(style="cyan")
     artifact_table.add_column(style="white")
     artifact_table.add_row("config_snapshot", str(config_snapshot_path))
+    artifact_table.add_row("effective_input", str(effective_input_path))
+    artifact_table.add_row(
+        "trainer_override_resolution", str(trainer_override_resolution_path)
+    )
+    artifact_table.add_row(
+        "trainer_override_verification", str(trainer_override_verification_path)
+    )
+    artifact_table.add_row(
+        "command_override_resolution", str(command_override_resolution_path)
+    )
+    artifact_table.add_row(
+        "command_override_verification", str(command_override_verification_path)
+    )
+    artifact_table.add_row(
+        "reward_override_resolution", str(reward_override_resolution_path)
+    )
+    artifact_table.add_row(
+        "reward_override_verification", str(reward_override_verification_path)
+    )
     artifact_table.add_row("stdout", str(stdout_log_path))
     artifact_table.add_row("stderr", str(stderr_log_path))
     artifact_table.add_row("summary", str(summary_path))
@@ -211,6 +429,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--project-root", help="Target project root for init mode")
     parser.add_argument(
         "--artifact-root", help="External artifact root for init mode or override"
+    )
+    parser.add_argument(
+        "--task-registry-path",
+        help="Task registry __init__.py path for restricted onboarding init",
+    )
+    parser.add_argument(
+        "--env-cfg-path",
+        help="Environment config path for restricted onboarding init",
+    )
+    parser.add_argument(
+        "--agent-cfg-path",
+        help="Agent config path for restricted onboarding init",
     )
     return parser.parse_args()
 
@@ -343,10 +573,119 @@ def run_init_mode(
     target["id"] = target_id
     target["project_root"] = str(project_root_path)
     target["artifact_root"] = artifact_root
+    if args.task_registry_path:
+        target["task_registry_path"] = args.task_registry_path
+    if args.env_cfg_path:
+        target["env_cfg_path"] = args.env_cfg_path
+    if args.agent_cfg_path:
+        target["agent_cfg_path"] = args.agent_cfg_path
     save_yaml(config_path, current_config)
 
     artifact_root_path = Path(artifact_root)
     artifact_root_path.mkdir(parents=True, exist_ok=True)
+    capability_package_dir = artifact_root_path / "capability_package"
+    capability_package_dir.mkdir(parents=True, exist_ok=True)
+
+    repo_root = Path(__file__).resolve().parent.parent
+    field_registry_path = repo_root / "configs" / "field_registry.yaml"
+    generated_field_registry_path = (
+        capability_package_dir / "field_registry.generated.yaml"
+    )
+    field_registry_exists = field_registry_path.exists()
+    field_registry_summary = None
+    capability_status = None
+    normalized_candidates = None
+    discovery_error = None
+    normalized_candidate_list_path = (
+        capability_package_dir / "normalized_candidate_list.yaml"
+    )
+    if normalized_candidate_list_path.exists():
+        normalized_candidates = load_yaml(normalized_candidate_list_path)
+
+    project_identity = {
+        "target_id": target_id,
+        "project_root": str(project_root_path),
+        "task_id": current_config.get("training", {}).get("task"),
+        "workspace_root": str(artifact_root_path),
+        "artifact_root": artifact_root,
+        "isaaclab_root": current_config.get("isaaclab", {}).get("root_dir"),
+    }
+
+    task_id = current_config.get("training", {}).get("task")
+    env_cfg_entry = target.get("env_cfg_path")
+    agent_cfg_entry = target.get("agent_cfg_path")
+    registry_entry = target.get("task_registry_path")
+    if (
+        isinstance(task_id, str)
+        and is_legged_locomotion_task(task_id)
+        and isinstance(env_cfg_entry, str)
+        and Path(env_cfg_entry).exists()
+    ):
+        source_snippets = build_legged_locomotion_source_snippets(
+            project_root=project_root_path,
+            task_id=task_id,
+            env_cfg_path=Path(env_cfg_entry),
+            agent_cfg_path=Path(agent_cfg_entry) if agent_cfg_entry else None,
+            registry_init_path=Path(registry_entry) if registry_entry else None,
+        )
+        try:
+            raw_discovery, normalized_candidates = (
+                run_field_discovery_and_normalization(
+                    task_id=task_id,
+                    task_type="ManagerBasedRLEnv",
+                    source_snippets=source_snippets,
+                    llm_client=build_default_llm_client(),
+                    agent_cfg_path=Path(agent_cfg_entry) if agent_cfg_entry else None,
+                )
+            )
+            save_yaml(capability_package_dir / "raw_discovery.yaml", raw_discovery)
+            update_capability_package_with_normalized_fields(
+                capability_package_dir,
+                normalized_candidates,
+            )
+            generated_field_registry = build_generated_field_registry(
+                normalized_candidates
+            )
+            save_generated_field_registry(
+                generated_field_registry_path,
+                generated_field_registry,
+            )
+            discovered_task_id = raw_discovery.get("project", {}).get("task_id")
+            if isinstance(discovered_task_id, str) and discovered_task_id:
+                project_identity["task_id"] = discovered_task_id
+        except Exception as exc:
+            discovery_error = {
+                "task_id": task_id,
+                "error": str(exc),
+            }
+            save_yaml(capability_package_dir / "discovery_error.yaml", discovery_error)
+
+    active_field_registry = None
+    if generated_field_registry_path.exists():
+        active_field_registry = load_yaml(generated_field_registry_path)
+    elif field_registry_exists:
+        active_field_registry = load_yaml(field_registry_path)
+
+    if active_field_registry is not None:
+        field_registry_summary = summarize_field_registry(active_field_registry)
+        capability_status = build_capability_status(
+            active_field_registry,
+            normalized_candidates,
+        )
+
+    task_policy = build_task_policy(current_config)
+    onboarding_report = build_onboarding_report(
+        project_identity=project_identity,
+        field_registry_summary=field_registry_summary,
+        capability_status=capability_status,
+        normalized_candidates=normalized_candidates,
+        discovery_error=discovery_error,
+    )
+    save_yaml(capability_package_dir / "project_identity.yaml", project_identity)
+    save_yaml(capability_package_dir / "task_policy.yaml", task_policy)
+    save_yaml(capability_package_dir / "onboarding_report.yaml", onboarding_report)
+    if capability_status is not None:
+        save_yaml(capability_package_dir / "capability_status.yaml", capability_status)
 
     init_info = {
         "target": {
@@ -359,7 +698,7 @@ def run_init_mode(
             "task": current_config.get("training", {}).get("task"),
         },
         "discovered": {
-            "trainer_repo": str(Path(__file__).resolve().parent.parent),
+            "trainer_repo": str(repo_root),
             "project_root_exists": project_root_path.exists(),
             "isaaclab_root": current_config.get("isaaclab", {}).get("root_dir"),
             "launcher": current_config.get("isaaclab", {}).get("launcher"),
@@ -370,8 +709,17 @@ def run_init_mode(
             "train_script_exists": Path(
                 current_config.get("isaaclab", {}).get("train_script", "")
             ).exists(),
+            "field_registry_path": str(field_registry_path),
+            "field_registry_exists": field_registry_exists,
+            "capability_package_dir": str(capability_package_dir),
         },
     }
+    if field_registry_summary is not None:
+        init_info["field_registry"] = field_registry_summary
+    if capability_status is not None:
+        init_info["capability_status"] = {
+            "layer_summary": capability_status["layers"],
+        }
     save_yaml(artifact_root_path / "target_info.yaml", init_info)
 
     info_table = Table.grid(padding=(0, 2))
@@ -382,6 +730,18 @@ def run_init_mode(
     info_table.add_row("Project", str(project_root_path))
     info_table.add_row("Artifacts", artifact_root)
     info_table.add_row("Info File", str(artifact_root_path / "target_info.yaml"))
+    info_table.add_row("Capability Dir", str(capability_package_dir))
+    if field_registry_summary is not None:
+        info_table.add_row(
+            "Planner Fields",
+            str(field_registry_summary["planner_enabled_count"]),
+        )
+        info_table.add_row("Field Layers", str(field_registry_summary["layers"]))
+    if capability_status is not None:
+        info_table.add_row(
+            "Capability Layers",
+            str(capability_status["layers"]),
+        )
     console.print(Panel(info_table, title="Init Complete", border_style="green"))
 
 
@@ -467,6 +827,9 @@ def main() -> None:
                         summary=result.summary,
                         llm_client=llm_client,
                         prompt_path=planner_prompt_path,
+                        field_registry_path=project_root
+                        / "configs"
+                        / "field_registry.yaml",
                         feedback=planner_feedback,
                     )
 
@@ -535,6 +898,13 @@ def main() -> None:
                 summary=result.summary,
                 planner=planner,
                 config_snapshot_path=result.config_snapshot_path,
+                effective_input_path=result.effective_input_path,
+                trainer_override_resolution_path=result.trainer_override_resolution_path,
+                trainer_override_verification_path=result.trainer_override_verification_path,
+                command_override_resolution_path=result.command_override_resolution_path,
+                command_override_verification_path=result.command_override_verification_path,
+                reward_override_resolution_path=result.reward_override_resolution_path,
+                reward_override_verification_path=result.reward_override_verification_path,
                 stdout_log_path=result.stdout_log_path,
                 stderr_log_path=result.stderr_log_path,
                 summary_path=result.summary_path,

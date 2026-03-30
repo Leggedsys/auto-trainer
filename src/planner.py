@@ -6,12 +6,24 @@ from typing import Any
 
 from llm import LLMClient
 from patcher import describe_numeric_bounds
+from utils import load_yaml
 
 
 ALLOWED_FIELDS = {
     "training.num_envs",
     "training.max_iterations",
-    "training.headless",
+    "training.learning_rate",
+    "training.entropy_coef",
+    "training.clip_param",
+    "training.num_mini_batches",
+    "command.lin_vel_x",
+    "command.lin_vel_y",
+    "command.ang_vel_z",
+    "command.heading",
+    "reward.track_lin_vel_xy_exp.weight",
+    "reward.track_ang_vel_z_exp.weight",
+    "reward.feet_air_time.weight",
+    "reward.flat_orientation_l2.weight",
 }
 
 
@@ -25,16 +37,36 @@ def build_planner_prompt(
     goal: str,
     current_config: dict[str, Any],
     summary: dict[str, Any],
+    field_registry_path: Path,
     feedback: str,
 ) -> str:
     bounds_lines = []
     for field, (lower, upper) in describe_numeric_bounds().items():
         bounds_lines.append(f"- {field}: [{lower}, {upper}]")
+    field_registry = load_yaml(field_registry_path)
+    field_lines = []
+    for entry in field_registry.get("fields", []):
+        if entry.get("enabled_for_planner"):
+            field_lines.append(
+                "- {field} | layer={layer} | kind={kind} | role={role} | bounds={bounds} | "
+                "description={description} | increase={increase} | decrease={decrease} | couplings={couplings}".format(
+                    field=entry["field"],
+                    layer=entry["layer"],
+                    kind=entry["kind"],
+                    role=entry["role"],
+                    bounds=entry["bounds"],
+                    description=entry["description"],
+                    increase=entry["effect_direction"]["increase"],
+                    decrease=entry["effect_direction"]["decrease"],
+                    couplings=entry["couplings"],
+                )
+            )
     return template.format(
         goal=goal,
         current_config=json.dumps(current_config, indent=2, sort_keys=True),
         summary=json.dumps(summary, indent=2, sort_keys=True),
         numeric_bounds="\n".join(bounds_lines),
+        field_registry="\n".join(field_lines),
         feedback=feedback,
     )
 
@@ -89,6 +121,7 @@ def plan_next_experiment(
     summary: dict[str, Any],
     llm_client: LLMClient,
     prompt_path: Path,
+    field_registry_path: Path,
     feedback: str = "None",
 ) -> dict[str, Any]:
     template = load_planner_prompt(prompt_path)
@@ -97,6 +130,7 @@ def plan_next_experiment(
         goal=goal,
         current_config=current_config,
         summary=summary,
+        field_registry_path=field_registry_path,
         feedback=feedback,
     )
     response_text = llm_client.generate(prompt)

@@ -7,13 +7,27 @@ Hard constraints:
 - Only change fields from this whitelist:
   - training.num_envs
   - training.max_iterations
-  - training.headless
+  - training.learning_rate
+  - training.entropy_coef
+  - training.clip_param
+  - training.num_mini_batches
+  - command.lin_vel_x
+  - command.lin_vel_y
+  - command.ang_vel_z
+  - command.heading
+  - reward.track_lin_vel_xy_exp.weight
+  - reward.track_ang_vel_z_exp.weight
+  - reward.feet_air_time.weight
+  - reward.flat_orientation_l2.weight
 - Numeric bounds must be respected exactly:
 {numeric_bounds}
+- Use the field registry below to understand what each field means in this specific project. Do not rely on field names alone.
+- Prefer coordinated changes that respect field roles and couplings.
 - Do not propose Python code changes.
 - Do not propose shell script changes.
 - Do not propose environment logic changes.
-- Do not modify the robot, task identity, reward design, observations, actions, or Isaac Lab source code.
+- Do not modify the robot, task identity, reward structure, observations, actions, or Isaac Lab source code.
+- You may adjust only the whitelisted reward weights and command ranges, not reward functions or task logic.
 - If the current configuration already looks reasonable, you may return an empty changes list.
 
 Return this exact JSON shape:
@@ -31,6 +45,9 @@ Return this exact JSON shape:
 
 Goal:
 {goal}
+
+Field registry:
+{field_registry}
 
 Current config:
 {current_config}

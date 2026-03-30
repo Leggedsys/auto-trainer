@@ -14,8 +14,16 @@ EXACT_ALLOWED_FIELDS = {
     "training.entropy_coef",
     "training.clip_param",
     "training.num_mini_batches",
+    "command.lin_vel_x",
+    "command.lin_vel_y",
+    "command.ang_vel_z",
+    "command.heading",
+    "reward.track_lin_vel_xy_exp.weight",
+    "reward.track_ang_vel_z_exp.weight",
+    "reward.feet_air_time.weight",
+    "reward.flat_orientation_l2.weight",
 }
-ALLOWED_PREFIXES = ("reward.", "command.")
+ALLOWED_PREFIXES: tuple[str, ...] = ()
 DENIED_PREFIXES = (
     "task.",
     "robot.",
@@ -33,6 +41,10 @@ NUMERIC_BOUNDS = {
     "training.entropy_coef": (0.0, 0.1),
     "training.clip_param": (0.05, 0.4),
     "training.num_mini_batches": (1, 64),
+    "reward.track_lin_vel_xy_exp.weight": (0.0, 5.0),
+    "reward.track_ang_vel_z_exp.weight": (0.0, 5.0),
+    "reward.feet_air_time.weight": (0.0, 2.0),
+    "reward.flat_orientation_l2.weight": (-10.0, 0.0),
 }
 
 
@@ -63,6 +75,27 @@ def _set_nested_value(config: dict[str, Any], field: str, value: Any) -> None:
 
 
 def _validate_value_bounds(field: str, value: Any) -> None:
+    if field.startswith("command."):
+        if not isinstance(value, (list, tuple)) or len(value) != 2:
+            raise ValueError(f"Field {field} must be a 2-value range")
+        low, high = value
+        if not isinstance(low, (int, float)) or not isinstance(high, (int, float)):
+            raise ValueError(f"Field {field} range values must be numeric")
+        if low > high:
+            raise ValueError(f"Field {field} must satisfy low <= high")
+        command_bounds = {
+            "command.lin_vel_x": (-1.5, 1.5),
+            "command.lin_vel_y": (-1.5, 1.5),
+            "command.ang_vel_z": (-2.0, 2.0),
+            "command.heading": (-3.141592653589793, 3.141592653589793),
+        }
+        lower, upper = command_bounds[field]
+        if low < lower or high > upper:
+            raise ValueError(
+                f"Field {field} out of bounds: [{low}, {high}] not in [{lower}, {upper}]"
+            )
+        return
+
     bounds = NUMERIC_BOUNDS.get(field)
     if bounds is None:
         return

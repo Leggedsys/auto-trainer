@@ -1,0 +1,186 @@
+version: 1
+target_id: isaaclab_go2
+task: Isaac-Velocity-Flat-Unitree-Go2-v0
+fields:
+  - field: training.num_envs
+    layer: training
+    hydra_path: null
+    kind: scalar
+    bounds: [1, 1024]
+    role: sample_throughput
+    description: Controls how many environments collect data in parallel for each rollout.
+    effect_direction:
+      increase: Increases throughput and sample diversity, but also raises memory and compute cost.
+      decrease: Lowers resource use, but reduces sample throughput and can slow learning.
+    couplings: [training.learning_rate, training.num_mini_batches]
+    validation_source: effective_input.yaml
+    enabled_for_planner: true
+  - field: training.max_iterations
+    layer: training
+    hydra_path: agent.max_iterations
+    kind: scalar
+    bounds: [1, 200]
+    role: training_horizon
+    description: Controls how many PPO update iterations the run performs.
+    effect_direction:
+      increase: Gives the policy more optimization time and usually improves convergence if the run is still learning.
+      decrease: Shortens experiments and cost, but may stop training before convergence.
+    couplings: [training.num_envs, training.learning_rate]
+    validation_source: agent.yaml
+    enabled_for_planner: true
+  - field: training.learning_rate
+    layer: training
+    hydra_path: agent.algorithm.learning_rate
+    kind: scalar
+    bounds: [1.0e-6, 1.0e-2]
+    role: optimizer_stability
+    description: PPO optimizer step size for policy and value updates.
+    effect_direction:
+      increase: Speeds learning but increases instability and overshoot risk.
+      decrease: Stabilizes updates but may slow progress.
+    couplings: [training.num_envs, training.num_mini_batches, training.clip_param]
+    validation_source: agent.yaml
+    enabled_for_planner: true
+  - field: training.entropy_coef
+    layer: training
+    hydra_path: agent.algorithm.entropy_coef
+    kind: scalar
+    bounds: [0.0, 0.1]
+    role: exploration_pressure
+    description: PPO entropy bonus coefficient controlling how strongly exploration is encouraged.
+    effect_direction:
+      increase: Encourages more exploration and stochastic behavior.
+      decrease: Encourages earlier exploitation and more deterministic behavior.
+    couplings: [training.learning_rate, reward.track_lin_vel_xy_exp.weight]
+    validation_source: agent.yaml
+    enabled_for_planner: true
+  - field: training.clip_param
+    layer: training
+    hydra_path: agent.algorithm.clip_param
+    kind: scalar
+    bounds: [0.05, 0.4]
+    role: ppo_update_constraint
+    description: PPO clipping range that constrains policy update magnitude.
+    effect_direction:
+      increase: Allows larger policy updates, which can speed learning but destabilize training.
+      decrease: Makes updates more conservative and stable.
+    couplings: [training.learning_rate]
+    validation_source: agent.yaml
+    enabled_for_planner: true
+  - field: training.num_mini_batches
+    layer: training
+    hydra_path: agent.algorithm.num_mini_batches
+    kind: scalar
+    bounds: [1, 64]
+    role: optimization_granularity
+    description: Number of mini-batches used per PPO epoch.
+    effect_direction:
+      increase: Uses smaller mini-batches and more gradient steps per rollout.
+      decrease: Uses larger mini-batches and fewer updates.
+    couplings: [training.learning_rate, training.num_envs]
+    validation_source: agent.yaml
+    enabled_for_planner: true
+  - field: command.lin_vel_x
+    layer: command
+    hydra_path: env.commands.base_velocity.ranges.lin_vel_x
+    kind: range
+    bounds: [-1.5, 1.5]
+    role: forward_velocity_distribution
+    description: Range of commanded forward and backward linear velocity targets.
+    effect_direction:
+      increase: Expands or shifts the forward command distribution, increasing task difficulty and coverage.
+      decrease: Narrows the command distribution, simplifying the tracking task.
+    couplings: [reward.track_lin_vel_xy_exp.weight, command.heading]
+    validation_source: env.yaml
+    enabled_for_planner: true
+  - field: command.lin_vel_y
+    layer: command
+    hydra_path: env.commands.base_velocity.ranges.lin_vel_y
+    kind: range
+    bounds: [-1.5, 1.5]
+    role: lateral_velocity_distribution
+    description: Range of commanded lateral velocity targets.
+    effect_direction:
+      increase: Expands sideways motion commands and task diversity.
+      decrease: Reduces lateral complexity and makes the task more forward-focused.
+    couplings: [reward.track_lin_vel_xy_exp.weight]
+    validation_source: env.yaml
+    enabled_for_planner: true
+  - field: command.ang_vel_z
+    layer: command
+    hydra_path: env.commands.base_velocity.ranges.ang_vel_z
+    kind: range
+    bounds: [-2.0, 2.0]
+    role: yaw_command_distribution
+    description: Range of commanded yaw angular velocity targets.
+    effect_direction:
+      increase: Increases turning demand and command diversity.
+      decrease: Makes turning easier and less dominant.
+    couplings: [reward.track_ang_vel_z_exp.weight, command.heading]
+    validation_source: env.yaml
+    enabled_for_planner: true
+  - field: command.heading
+    layer: command
+    hydra_path: env.commands.base_velocity.ranges.heading
+    kind: range
+    bounds: [-3.141592653589793, 3.141592653589793]
+    role: heading_target_distribution
+    description: Range of target headings used when heading command mode is active.
+    effect_direction:
+      increase: Expands heading diversity and directional complexity.
+      decrease: Narrows heading changes and simplifies orientation control.
+    couplings: [command.ang_vel_z, reward.track_ang_vel_z_exp.weight]
+    validation_source: env.yaml
+    enabled_for_planner: true
+  - field: reward.track_lin_vel_xy_exp.weight
+    layer: reward
+    hydra_path: env.rewards.track_lin_vel_xy_exp.weight
+    kind: scalar
+    bounds: [0.0, 5.0]
+    role: primary_task_reward
+    description: Primary reward weight for tracking commanded planar linear velocity.
+    effect_direction:
+      increase: Strengthens the main locomotion objective and command-following pressure.
+      decrease: Weakens task reward relative to penalties and secondary terms.
+    couplings: [command.lin_vel_x, command.lin_vel_y, reward.track_ang_vel_z_exp.weight]
+    validation_source: env.yaml
+    enabled_for_planner: true
+  - field: reward.track_ang_vel_z_exp.weight
+    layer: reward
+    hydra_path: env.rewards.track_ang_vel_z_exp.weight
+    kind: scalar
+    bounds: [0.0, 5.0]
+    role: turning_task_reward
+    description: Reward weight for tracking commanded yaw angular velocity.
+    effect_direction:
+      increase: Emphasizes turning accuracy and rotational command following.
+      decrease: Reduces turning priority relative to forward tracking.
+    couplings: [command.ang_vel_z, reward.track_lin_vel_xy_exp.weight]
+    validation_source: env.yaml
+    enabled_for_planner: true
+  - field: reward.feet_air_time.weight
+    layer: reward
+    hydra_path: env.rewards.feet_air_time.weight
+    kind: scalar
+    bounds: [0.0, 2.0]
+    role: gait_timing_reward
+    description: Reward weight encouraging useful swing timing and stepping behavior.
+    effect_direction:
+      increase: Encourages more pronounced stepping and gait timing behavior.
+      decrease: Reduces gait-shaping influence.
+    couplings: [command.lin_vel_x, reward.track_lin_vel_xy_exp.weight]
+    validation_source: env.yaml
+    enabled_for_planner: true
+  - field: reward.flat_orientation_l2.weight
+    layer: reward
+    hydra_path: env.rewards.flat_orientation_l2.weight
+    kind: scalar
+    bounds: [-10.0, 0.0]
+    role: body_stability_penalty
+    description: Penalty weight discouraging base orientation deviation from upright alignment.
+    effect_direction:
+      increase: Makes the penalty less negative, relaxing orientation constraints.
+      decrease: Makes the penalty more negative, enforcing stronger posture stability.
+    couplings: [reward.track_lin_vel_xy_exp.weight, reward.feet_air_time.weight]
+    validation_source: env.yaml
+    enabled_for_planner: true

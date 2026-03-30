@@ -7,19 +7,23 @@
 
 ## 当前目标
 
-把当前仓库收紧成一个可信的自动调参器最小闭环。
+把第一阶段从“可信自动调参器内核”推进到“可信项目 onboarding”。
 
 ## 当前最重要的三件事
 
-1. 清理 planner 白名单与真实训练注入路径不一致的问题。
-2. 明确并保存每轮训练的 effective input 与关键 artifact。
-3. 为后续 trainer override 设计正式注入点，但暂不提前开放更多字段。
+1. 用真实 legged 样本验证受限版 `--init` 的自动 discovery 能力，确认 `raw_discovery.yaml` 与 `normalized_candidate_list.yaml` 产出质量。
+2. 继续选择更多腿足 locomotion 样本验证 discovery -> normalization 原型的跨任务稳定性。
+3. 保持 1A 已闭合能力稳定，继续用测试覆盖白名单一致性、artifact 产出、配置建模、override 解析、passthrough 行为和真实生效验证。
 
 ## 当前不做的事
 
 - 不继续扩大 `reward.*` 和 `command.*` 的自动可改范围。
 - 不提前进入自由代码生成。
 - 不为了“记录完整”继续扩张规划文档数量。
+- 不在 trainer override 落地前重新开放 `training.headless` 或其他未注入字段给 planner。
+- 不在 1B 自动接入标准未明确前，草率把手工接入流程直接固化进 `--init`。
+- 不把当前 Go2 项目的目录结构和 capability 布局直接当成未来多项目通用方案。
+- 不在 1B 早期就追求“任意项目完全自动接线”，先以可信发现、可信诊断和可信验收为主。
 
 ## 下一阶段进入条件
 

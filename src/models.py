@@ -17,6 +17,12 @@ class TrainingConfig:
     headless: bool
     num_envs: int
     max_iterations: int
+    trainer_override_mode: str
+    trainer_overrides: dict[str, float | int | bool]
+    command_override_mode: str
+    command_overrides: dict[str, tuple[float, float] | list[float]]
+    reward_override_mode: str
+    reward_overrides: dict[str, float | int]
 
 
 @dataclass(slots=True)
@@ -25,6 +31,13 @@ class RunResult:
     target_id: str
     run_dir: Path
     command: list[str]
+    effective_input_path: Path
+    trainer_override_resolution_path: Path
+    trainer_override_verification_path: Path
+    command_override_resolution_path: Path
+    command_override_verification_path: Path
+    reward_override_resolution_path: Path
+    reward_override_verification_path: Path
     return_code: int
     config_snapshot_path: Path
     stdout_log_path: Path
